@@ -5,6 +5,5 @@ CREATE TABLE asignaciones (
     tipo_vehiculo  VARCHAR(100) NOT NULL,
     fecha_inicio   DATE         NOT NULL,
     fecha_fin      DATE         NOT NULL,
-    email_contacto VARCHAR(200) NOT NULL,
     creada_en      TIMESTAMP    NOT NULL DEFAULT NOW()
 );

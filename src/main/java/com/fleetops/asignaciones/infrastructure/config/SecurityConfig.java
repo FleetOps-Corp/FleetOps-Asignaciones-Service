@@ -28,16 +28,10 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable)
-                .sessionManagement(session ->
-                        session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/**", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/asignaciones").authenticated()
-                        .requestMatchers(HttpMethod.GET,  "/asignaciones/saga/**").authenticated()
-                        .anyRequest().authenticated()
-                )
-                .oauth2ResourceServer(oauth2 ->
-                        oauth2.jwt(jwt -> {})); // Spring ahora sí encontrará el Bean de abajo
+                        .anyRequest().permitAll()
+                );
+                 // Spring ahora sí encontrará el Bean de abajo
         return http.build();
     }
 
