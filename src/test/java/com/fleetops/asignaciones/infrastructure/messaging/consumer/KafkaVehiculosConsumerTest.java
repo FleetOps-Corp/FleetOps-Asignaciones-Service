@@ -57,12 +57,9 @@ class KafkaVehiculosConsumerTest {
     @DisplayName("onVehiculoConfirmado: si ocurre un error no hace ACK")
     void onVehiculoConfirmado_dadoError_noHaceAck() {
 
-        UUID idAsignacion = UUID.randomUUID();
-        UUID idVehiculo = UUID.randomUUID();
-
         Map<String, Object> payload = Map.of(
-                "idAsignacion", idAsignacion.toString(),
-                "idVehiculo", idVehiculo.toString()
+                "idAsignacion", UUID.randomUUID().toString(),
+                "idVehiculo", UUID.randomUUID().toString()
         );
 
         doThrow(new RuntimeException("DB no disponible"))
@@ -79,16 +76,17 @@ class KafkaVehiculosConsumerTest {
     void onVehiculoRechazado_delegaEnUseCaseCompensacionYHaceAck() {
 
         UUID idAsignacion = UUID.randomUUID();
+        String motivo = "Sin stock de vehiculos CAMION";
 
         Map<String, Object> payload = Map.of(
                 "idAsignacion", idAsignacion.toString(),
-                "motivo", "Sin stock de vehiculos CAMION"
+                "motivo", motivo
         );
 
         consumer.onVehiculoRechazado(payload, ack);
 
         verify(procesarVehiculoRechazadoUseCase)
-                .procesar(idAsignacion, "Sin stock de vehiculos CAMION");
+                .procesar(idAsignacion, motivo);
 
         verify(ack).acknowledge();
         verifyNoInteractions(procesarVehiculoAsignadoUseCase);
@@ -98,10 +96,8 @@ class KafkaVehiculosConsumerTest {
     @DisplayName("onVehiculoRechazado: si ocurre un error no hace ACK")
     void onVehiculoRechazado_dadoError_noHaceAck() {
 
-        UUID idAsignacion = UUID.randomUUID();
-
         Map<String, Object> payload = Map.of(
-                "idAsignacion", idAsignacion.toString(),
+                "idAsignacion", UUID.randomUUID().toString(),
                 "motivo", "motivo"
         );
 
