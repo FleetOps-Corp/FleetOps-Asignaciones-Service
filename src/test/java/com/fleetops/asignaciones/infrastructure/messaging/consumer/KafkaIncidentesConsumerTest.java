@@ -1,11 +1,11 @@
 package com.fleetops.asignaciones.infrastructure.messaging.consumer;
 
 import com.fleetops.asignaciones.application.port.in.ProcesarFallaMecanicaUseCase;
-import com.fleetops.asignaciones.infrastructure.messaging.dto.FallaMecanicaMessage;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.support.Acknowledgment;
@@ -22,24 +22,32 @@ class KafkaIncidentesConsumerTest {
     @Mock
     private ProcesarFallaMecanicaUseCase procesarFallaMecanicaUseCase;
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     @Mock
     private Acknowledgment ack;
 
-    @InjectMocks
     private KafkaIncidentesConsumer consumer;
+
+    @BeforeEach
+    void setUp() {
+        consumer = new KafkaIncidentesConsumer(procesarFallaMecanicaUseCase, objectMapper);
+    }
 
     @Test
     @DisplayName("onFallaMecanica: procesa correctamente y hace ACK")
     void onFallaMecanica_procesaCorrectamente_yHaceAck() {
 
-        FallaMecanicaMessage mensaje = new FallaMecanicaMessage(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                "Falla en el motor"
-        );
+        String mensajeJson = "{" +
+                "\"incident_id\":\"" + UUID.randomUUID() + "\"," +
+                "\"vehicle_id\":\"" + UUID.randomUUID() + "\"," +
+                "\"description\":\"Falla en el motor\"," +
+                "\"driver_id\":\"" + UUID.randomUUID() + "\"," +
+                "\"incident_type\":\"MECANICO\"," +
+                "\"Severity\":\"GRAVE\"," +
+                "\"event_date\":\"2026-07-02T10:15:00Z\"}";
 
-        consumer.onFallaMecanica(mensaje, ack);
+        consumer.onFallaMecanica(mensajeJson, ack);
 
         verify(procesarFallaMecanicaUseCase).procesar(any());
         verify(ack).acknowledge();
@@ -49,18 +57,9 @@ class KafkaIncidentesConsumerTest {
     @DisplayName("onFallaMecanica: si ocurre error NO hace ACK")
     void onFallaMecanica_siHayError_noHaceAck() {
 
-        FallaMecanicaMessage mensaje = new FallaMecanicaMessage(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                "Falla en el motor"
-        );
+        String mensajeJson = "{invalid-json";
 
-        doThrow(new RuntimeException("Error procesando incidente"))
-                .when(procesarFallaMecanicaUseCase)
-                .procesar(any());
-
-        consumer.onFallaMecanica(mensaje, ack);
+        consumer.onFallaMecanica(mensajeJson, ack);
 
         verify(ack, never()).acknowledge();
     }

@@ -48,4 +48,15 @@ public class Asignacion {
         }
         this.vehiculoId = vehiculoId;
     }
+
+    public void liberarVehiculo() {
+        this.vehiculoId = null;
+    }
+
+    public void reasignarConductor(Conductor conductor) {
+        if (conductor == null) {
+            throw new IllegalArgumentException("El conductor no puede ser nulo.");
+        }
+        this.conductor = conductor;
+    }
 }
