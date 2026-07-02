@@ -8,6 +8,7 @@ import com.fleetops.asignaciones.domain.enums.EstadoConductor;
 import com.fleetops.asignaciones.domain.enums.EstadoSaga;
 import com.fleetops.asignaciones.domain.event.FallaMecanicaRecibidaEvent;
 import com.fleetops.asignaciones.domain.event.VehiculoLiberadoEvent;
+import com.fleetops.asignaciones.domain.event.VehiculoSolicitadoEvent;
 import com.fleetops.asignaciones.domain.model.Asignacion;
 import com.fleetops.asignaciones.domain.model.Conductor;
 import com.fleetops.asignaciones.domain.model.SagaRegistro;
@@ -24,6 +25,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Date;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -45,11 +47,13 @@ class ReasignacionServiceTest {
     void setUp() {
         ReflectionTestUtils.setField(service, "topicVehiculosLiberar",
                 "fleetops.vehiculos.liberar");
+        ReflectionTestUtils.setField(service, "topicVehiculosSolicitar",
+                "fleetops.vehiculos.solicitar");
     }
 
     @Test
-    @DisplayName("procesar: dado evento de falla mecanica, libera conductor, actualiza SAGA y publica VehiculoLiberadoEvent")
-    void procesar_dadoFallaMecanica_liberaConductorYPublicaEvento() {
+    @DisplayName("procesar: incidente mecanico grave libera vehiculo, marca SAGA en espera y publica liberacion + solicitud")
+    void procesar_dadoIncidenteMecanicoGrave_liberaVehiculoYPublicaEventos() {
         // Arrange
         UUID idAsignacion = UUID.randomUUID();
         UUID idVehiculo   = UUID.randomUUID();
@@ -70,19 +74,25 @@ class ReasignacionServiceTest {
                 .estado(EstadoSaga.COMPLETADO)
                 .build();
 
-        when(asignacionRepository.buscarPorId(idAsignacion)).thenReturn(Optional.of(asignacion));
+        when(asignacionRepository.buscarPorVehiculoId(idVehiculo)).thenReturn(Optional.of(asignacion));
         when(sagaRepository.buscarPorAsignacionId(idAsignacion)).thenReturn(Optional.of(saga));
-        when(conductorRepository.guardar(any())).thenReturn(conductor);
+        when(asignacionRepository.guardar(any())).thenReturn(asignacion);
         when(sagaRepository.guardar(any())).thenReturn(saga);
 
         FallaMecanicaRecibidaEvent evento = new FallaMecanicaRecibidaEvent(
-                idIncidente, idVehiculo, idAsignacion, "Motor averiado");
+                idIncidente,
+                idVehiculo,
+                "Motor averiado",
+                UUID.randomUUID(),
+                "MECANICO",
+                "GRAVE",
+                new Date());
 
         // Act
         service.procesar(evento);
 
-        // Assert — conductor liberado
-        assertThat(conductor.getEstado()).isEqualTo(EstadoConductor.DISPONIBLE);
+        // Assert — vehiculo liberado en la asignacion
+        assertThat(asignacion.getVehiculoId()).isNull();
 
         // Assert — SAGA en estado de compensación
         assertThat(saga.getEstado()).isEqualTo(EstadoSaga.PENDIENTE_LIBERACION);
@@ -94,19 +104,89 @@ class ReasignacionServiceTest {
 
         VehiculoLiberadoEvent eventoPublicado = (VehiculoLiberadoEvent) captor.getValue();
         assertThat(eventoPublicado.idVehiculo()).isEqualTo(idVehiculo);
+
+        verify(eventPublisher).publicar(eq("fleetops.vehiculos.solicitar"), any(VehiculoSolicitadoEvent.class));
     }
 
     @Test
-    @DisplayName("procesar: dado asignacion inexistente, lanza excepcion sin publicar evento")
-    void procesar_dadoAsignacionInexistente_lanzaExcepcion() {
-        // Arrange
+    @DisplayName("procesar: incidente humano grave reasigna conductor disponible")
+    void procesar_dadoIncidenteHumanoGrave_reasignaConductor() {
+
         UUID idAsignacion = UUID.randomUUID();
-        when(asignacionRepository.buscarPorId(idAsignacion)).thenReturn(Optional.empty());
+        UUID idVehiculo = UUID.randomUUID();
+        UUID conductorAntiguoId = UUID.randomUUID();
+        UUID conductorNuevoId = UUID.randomUUID();
+
+        Conductor conductor = Conductor.builder()
+                .id(conductorAntiguoId)
+                .estado(EstadoConductor.RESERVADO)
+                .tipoVehiculo("CAMION")
+                .build();
+        Conductor conductorNuevo = Conductor.builder()
+                .id(conductorNuevoId)
+                .estado(EstadoConductor.DISPONIBLE)
+                .tipoVehiculo("CAMION")
+                .build();
+
+        Asignacion asignacion = Asignacion.builder()
+                .id(idAsignacion)
+                .conductor(conductor)
+                .vehiculoId(idVehiculo)
+                .tipoVehiculo("CAMION")
+                .build();
+
+        when(asignacionRepository.buscarPorConductorId(conductorAntiguoId))
+                .thenReturn(Optional.of(asignacion));
+        when(conductorRepository.buscarDisponiblePorTipoVehiculo("CAMION")).thenReturn(Optional.of(conductorNuevo));
+        when(conductorRepository.guardar(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(asignacionRepository.guardar(any())).thenReturn(asignacion);
 
         FallaMecanicaRecibidaEvent evento = new FallaMecanicaRecibidaEvent(
-                UUID.randomUUID(), UUID.randomUUID(), idAsignacion, "falla");
+                UUID.randomUUID(),
+                idVehiculo,
+                "Conductor incapacitado",
+                conductorAntiguoId,
+                "HUMANO",
+                "GRAVE",
+                new Date()
+        );
 
-        // Act & Assert
+        service.procesar(evento);
+
+        assertThat(conductor.getEstado()).isEqualTo(EstadoConductor.DISPONIBLE);
+        assertThat(conductorNuevo.getEstado()).isEqualTo(EstadoConductor.RESERVADO);
+        assertThat(asignacion.getConductor()).isEqualTo(conductorNuevo);
+
+        verify(eventPublisher, never()).publicar(eq("fleetops.vehiculos.liberar"), any());
+        verify(eventPublisher, never()).publicar(eq("fleetops.vehiculos.solicitar"), any());
+    }
+
+    @Test
+    @DisplayName("procesar: dado incidente no grave, no aplica compensacion")
+    void procesar_dadoIncidenteNoGrave_noHaceNada() {
+        FallaMecanicaRecibidaEvent evento = new FallaMecanicaRecibidaEvent(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "Golpe menor",
+                UUID.randomUUID(),
+                "MECANICO",
+                "LEVE",
+                new Date());
+
+        service.procesar(evento);
+
+        verifyNoInteractions(asignacionRepository, conductorRepository, sagaRepository, eventPublisher);
+    }
+
+    @Test
+    @DisplayName("procesar: dado incidente mecanico con vehiculo inexistente, lanza excepcion")
+    void procesar_dadoVehiculoInexistente_lanzaExcepcion() {
+        UUID idVehiculo = UUID.randomUUID();
+        when(asignacionRepository.buscarPorVehiculoId(idVehiculo)).thenReturn(Optional.empty());
+
+        FallaMecanicaRecibidaEvent evento = new FallaMecanicaRecibidaEvent(
+                UUID.randomUUID(), idVehiculo, "falla", UUID.randomUUID(), "MECANICO", "GRAVE", new Date());
+
         assertThatThrownBy(() -> service.procesar(evento))
                 .isInstanceOf(NoSuchElementException.class);
 
@@ -114,10 +194,9 @@ class ReasignacionServiceTest {
     }
 
     @Test
-    @DisplayName("procesar: dado saga inexistente, lanza excepcion sin publicar evento")
-    void procesar_dadoSagaInexistente_lanzaExcepcion() {
-
-        UUID idAsignacion = UUID.randomUUID();
+    @DisplayName("procesar: dado conductor inexistente, lanza excepcion")
+    void procesar_dadoConductorInexistente_lanzaExcepcion() {
+        UUID idConductor = UUID.randomUUID();
         UUID idVehiculo = UUID.randomUUID();
 
         Conductor conductor = Conductor.builder()
@@ -126,27 +205,27 @@ class ReasignacionServiceTest {
                 .build();
 
         Asignacion asignacion = Asignacion.builder()
-                .id(idAsignacion)
+                .id(UUID.randomUUID())
                 .conductor(conductor)
                 .vehiculoId(idVehiculo)
                 .build();
 
-        when(asignacionRepository.buscarPorId(idAsignacion))
-                .thenReturn(Optional.of(asignacion));
-
-        when(sagaRepository.buscarPorAsignacionId(idAsignacion))
-                .thenReturn(Optional.empty());
+        when(asignacionRepository.buscarPorConductorId(idConductor)).thenReturn(Optional.of(asignacion));
+        when(conductorRepository.buscarDisponiblePorTipoVehiculo(any())).thenReturn(Optional.empty());
 
         FallaMecanicaRecibidaEvent evento = new FallaMecanicaRecibidaEvent(
                 UUID.randomUUID(),
                 idVehiculo,
-                idAsignacion,
-                "Motor averiado"
+                "Conductor incapacitado",
+                idConductor,
+                "HUMANO",
+                "GRAVE",
+                new Date()
         );
 
         assertThatThrownBy(() -> service.procesar(evento))
                 .isInstanceOf(NoSuchElementException.class)
-                .hasMessageContaining("Saga no encontrada");
+                .hasMessageContaining("No hay conductor disponible");
 
         verify(eventPublisher, never()).publicar(any(), any());
     }

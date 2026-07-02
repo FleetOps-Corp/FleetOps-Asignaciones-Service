@@ -23,4 +23,14 @@ public class AsignacionPersistenceAdapter implements AsignacionRepositoryPort {
     public Optional<Asignacion> buscarPorId(UUID id) {
         return jpaRepository.findById(id);
     }
+
+    @Override
+    public Optional<Asignacion> buscarPorVehiculoId(UUID vehiculoId) {
+        return jpaRepository.findFirstByVehiculoId(vehiculoId);
+    }
+
+    @Override
+    public Optional<Asignacion> buscarPorConductorId(UUID conductorId) {
+        return jpaRepository.findFirstByConductorId(conductorId);
+    }
 }
