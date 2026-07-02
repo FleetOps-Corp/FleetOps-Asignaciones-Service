@@ -3,6 +3,7 @@ package com.fleetops.asignaciones.infrastructure.messaging.consumer;
 import com.fleetops.asignaciones.application.port.in.ProcesarFallaMecanicaUseCase;
 import com.fleetops.asignaciones.domain.event.FallaMecanicaRecibidaEvent;
 import com.fleetops.asignaciones.infrastructure.messaging.dto.FallaMecanicaMessage;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Component;
 public class KafkaIncidentesConsumer {
 
     private final ProcesarFallaMecanicaUseCase procesarFallaMecanicaUseCase;
+    private final ObjectMapper objectMapper;
 
     /**
      * Driving adapter: escucha fallas mecánicas reportadas por Incidentes.
@@ -23,23 +25,28 @@ public class KafkaIncidentesConsumer {
     @KafkaListener(
             topics = "${asignaciones.kafka.topics.incidentes-falla-mecanica}",
             groupId = "${asignaciones.kafka.consumer.group-id}",
-            containerFactory = "kafkaListenerContainerFactory"
+            containerFactory = "kafkaIncidentesListenerContainerFactory"
     )
-    public void onFallaMecanica(FallaMecanicaMessage mensaje, Acknowledgment ack) {
-        log.info("Evento falla mecanica recibido. Incidente: {} Vehiculo: {}",
-                mensaje.idIncidente(), mensaje.idVehiculo());
+    public void onFallaMecanica(String mensajeJson, Acknowledgment ack) {
         try {
+            FallaMecanicaMessage mensaje = objectMapper.readValue(mensajeJson, FallaMecanicaMessage.class);
+
+            log.info("Incidente recibido. incidente={} tipo={} severidad={} vehiculo={} conductor={}",
+                mensaje.incidentId(), mensaje.incidentType(), mensaje.severity(), mensaje.vehicleId(), mensaje.driverId());
+
             FallaMecanicaRecibidaEvent evento = new FallaMecanicaRecibidaEvent(
-                    mensaje.idIncidente(),
-                    mensaje.idVehiculo(),
-                    mensaje.idAsignacion(),
-                    mensaje.descripcion()
+                mensaje.incidentId(),
+                mensaje.vehicleId(),
+                mensaje.description(),
+                mensaje.driverId(),
+                mensaje.incidentType(),
+                mensaje.severity(),
+                mensaje.eventDate()
             );
             procesarFallaMecanicaUseCase.procesar(evento);
             ack.acknowledge();
         } catch (Exception ex) {
-            log.error("Error procesando falla mecanica incidente {}: {}",
-                    mensaje.idIncidente(), ex.getMessage());
+            log.error("Error procesando incidente recibido: {}", ex.getMessage(), ex);
             // No hacemos ack → Kafka reintentará según la política de reintentos del consumer
         }
     }
