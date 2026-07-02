@@ -44,7 +44,7 @@ class KafkaIncidentesConsumerTest {
                 "\"description\":\"Falla en el motor\"," +
                 "\"driver_id\":\"" + UUID.randomUUID() + "\"," +
                 "\"incident_type\":\"MECANICO\"," +
-                "\"Severity\":\"GRAVE\"," +
+                "\"severity\":\"GRAVE\"," +
                 "\"event_date\":\"2026-07-02T10:15:00Z\"}";
 
         consumer.onFallaMecanica(mensajeJson, ack);
