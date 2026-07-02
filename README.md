@@ -98,11 +98,11 @@ Respuesta posible:
 
 | Topic | Quién publica | Quién consume | Cuándo |
 |-------|--------------|---------------|--------|
-| `fleetops.vehiculos.solicitar` | Asignaciones | Vehículos | Al crear una asignación |
-| `fleetops.vehiculos.liberar` | Asignaciones | Vehículos | Al procesar una falla mecánica |
+| `fleetops.vehiculos.solicitar` | Asignaciones | Vehículos | Al crear una asignación o reintentar una reasignación mecánica |
+| `fleetops.vehiculos.liberar` | Asignaciones | Vehículos | Al procesar un incidente mecánico grave |
 | `fleetops.asignaciones.vehiculo.confirmado` | Vehículos | Asignaciones | Cuando Vehículos asigna el vehículo |
 | `fleetops.asignaciones.vehiculo.fallido` | Vehículos | Asignaciones | Cuando Vehículos no puede asignar |
-| `fleetops.incidentes.falla.mecanica` | Incidentes | Asignaciones | Cuando hay una falla mecánica |
+| `fleetops.incidentes.falla.mecanica` | Incidentes | Asignaciones | Cuando llega un incidente grave mecánico o humano |
 | `fleetops.asignaciones.completada` | Asignaciones | Otros servicios | Al completar exitosamente |
 | `fleetops.asignaciones.fallida` | Asignaciones | Otros servicios | Al fallar la asignación |
 
@@ -125,10 +125,19 @@ Flujo 2 — Vehículo no disponible (compensación):
     → [Asignaciones] libera conductor  + publica AsignacionFallidaEvent
     → GET /asignaciones/saga/{id} → estado: FALLIDO
 
-Flujo 3 — Falla mecánica desde Incidentes:
-  [Incidentes] detecta falla + publica FallaMecanicaEvent
-    → [Asignaciones] libera conductor + publica VehiculoLiberadoEvent
-    → [Vehículos]    libera vehículo  (autónomamente)
+Flujo 3 — Incidente mecánico grave:
+  [Incidentes] publica incidente MECANICO/GRAVE
+    → [Asignaciones] localiza la asignación por vehicle_id
+    → [Asignaciones] libera el vehículo actual y marca la SAGA como PENDIENTE_LIBERACION
+    → [Asignaciones] publica VehiculoLiberadoEvent + VehiculoSolicitadoEvent
+    → [Vehículos]    libera el vehículo y luego asigna uno nuevo
+
+Flujo 4 — Incidente humano grave:
+  [Incidentes] publica incidente HUMANO/GRAVE
+    → [Asignaciones] localiza la asignación por driver_id
+    → [Asignaciones] libera el conductor afectado
+    → [Asignaciones] busca otro conductor disponible del mismo tipo de vehículo
+    → [Asignaciones] actualiza la asignación con el nuevo conductor
 ```
 
 ---
@@ -255,9 +264,72 @@ kafka-console-consumer --bootstrap-server localhost:29092 \
 
 ---
 
+## Cómo probar el nuevo flujo con Incidentes
+
+Primero levanta la infraestructura y el microservicio:
+
+```powershell
+docker compose up -d --build
+```
+
+Luego publica un incidente grave mecánico en el topic `fleetops.incidentes.falla.mecanica` con este JSON:
+
+```json
+{
+  "incident_id": "11111111-1111-1111-1111-111111111111",
+  "vehicle_id": "11111111-1111-1111-1111-111211111111",
+  "description": "Falla grave de motor",
+  "driver_id": "11111111-1111-1111-1111-111111111111",
+  "incident_type": "MECANICO",
+  "severity": "GRAVE",
+  "event_date": "2026-07-02T10:15:00Z"
+}
+```
+
+En ese caso debes ver en los logs que Asignaciones:
+
+1. encuentra la asignación por `vehicle_id`
+2. libera el vehículo actual
+3. publica `VehiculoLiberadoEvent`
+4. publica `VehiculoSolicitadoEvent` para pedir otro vehículo
+
+Para un incidente grave humano, publica un payload similar cambiando `incident_type` a `HUMANO` y usando el `driver_id` real del conductor afectado:
+
+```json
+{
+  "incident_id": "44444444-4444-4444-4444-444444444444",
+  "vehicle_id": "1111111-1111-1111-1111-111211111111",
+  "description": "Conductor incapacitado",
+  "driver_id": "11111111-1111-1111-1111-111111111111",
+  "incident_type": "HUMANO",
+  "severity": "GRAVE",
+  "even_date": "2026-07-02T10:20:00Z"
+}
+```
+
+Ese flujo debe:
+
+1. localizar la asignación por `driver_id`
+2. liberar el conductor afectado
+3. reservar otro conductor disponible del mismo tipo de vehículo
+4. actualizar la asignación existente con el nuevo conductor
+
+Para validar rápido, revisa los logs del servicio `asignaciones`:
+
+```powershell
+docker compose logs -f asignaciones
+```
+
+Si quieres ejecutar solo la suite impactada:
+
+```powershell
+./mvnw test -Dtest=KafkaIncidentesConsumerTest,ReasignacionServiceTest
+```
+
 ## Limitaciones conocidas y próximos pasos
 
-- **Contrato con Incidentes:** el `FallaMecanicaMessage` asume los campos `idIncidente`, `idVehiculo`, `idAsignacion` y `descripcion`. Debe coordinarse con el equipo de Incidentes.
+- **Contrato con Incidentes:** el `FallaMecanicaMessage` ahora espera `incident_id`, `vehicle_id`, `description`, `driver_id`, `incident_type`, `Severity` y `event_date`. Si el productor usa `event_date`, el consumidor también lo acepta por alias.
+- **Reasignación humana:** el microservicio reasigna el conductor buscando otro disponible del mismo tipo de vehículo; si no existe, el mensaje se reintenta por Kafka.
 - **Dead Letter Queue (DLQ):** mensajes que fallen todos los reintentos del consumer quedan sin procesar. Se recomienda configurar un topic DLQ en producción.
 - **Vista de despliegue AWS EC2:** el SAD tiene esta sección pendiente; el `docker-compose.yml` cubre entornos locales y de CI.
 - **Schema Registry:** para producción se recomienda Confluent Schema Registry con Avro para detectar roturas de contrato en tiempo de compilación.

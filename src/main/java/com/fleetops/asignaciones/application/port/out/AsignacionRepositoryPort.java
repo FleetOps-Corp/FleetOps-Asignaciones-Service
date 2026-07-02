@@ -7,4 +7,6 @@ import java.util.UUID;
 public interface AsignacionRepositoryPort {
     Asignacion guardar(Asignacion asignacion);
     Optional<Asignacion> buscarPorId(UUID id);
+    Optional<Asignacion> buscarPorVehiculoId(UUID vehiculoId);
+    Optional<Asignacion> buscarPorConductorId(UUID conductorId);
 }

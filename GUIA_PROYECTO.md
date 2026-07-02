@@ -222,7 +222,7 @@ kafka-console-producer \
 # Pegar este JSON y presionar Enter:
 {"idAsignacion":"UUID_DE_TU_ASIGNACION","idVehiculo":"UUID_DEL_VEHICULO"}
 #Ejemplo para las longitudes de los UUIDs:
-{"idAsignacion":"e7f351fe-9807-4c00-bc01-175be1b7e325","idVehiculo":"11111111-1111-1111-1111-111211111111"}
+{"idAsignacion":"3fabc3ac-1067-4097-b369-0551b042f76b","idVehiculo":"11111111-1111-1111-1111-111211111111"}
 # Simular que Vehículos rechazó la solicitud
 kafka-console-producer \
   --bootstrap-server localhost:29092 \
@@ -246,10 +246,8 @@ kafka-console-consumer \
   --from-beginning
   
 #Ver todas las solictudes completadas
-kafka-console-consumer \  
-  --bootstrap-server localhost:29092 \ 
-  --topic fleetops.asignaciones.completada \
-  --from-beginning 
+kafka-console-consumer \  --bootstrap-server localhost:29092 \ --topic fleetops.asignaciones.completada \--from-beginning 
+  
 ```
 
 ---
