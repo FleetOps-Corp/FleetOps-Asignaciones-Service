@@ -167,7 +167,7 @@ curl -X POST http://localhost:8080/asignaciones \
     "tipoVehiculo": "CAMION",
     "fechaInicio": "2026-07-01",
     "fechaFin": "2026-07-10",
-    "emailContacto": "coordinador@fleetops.com"
+    "kilometros": "100"
   }'
 ```
 
@@ -214,7 +214,7 @@ Para probar el flujo coreografiado sin tener los otros microservicios levantados
 # Entrar al contenedor de Kafka
 docker exec -it fleetops-kafka bash
 
-# Simular que Vehículos confirmó la asignación
+# Simular que Vehículos confirmó la asignación - Esto publica vehiculos 
 kafka-console-producer \
   --bootstrap-server localhost:29092 \
   --topic fleetops.asignaciones.vehiculo.confirmado
@@ -223,6 +223,8 @@ kafka-console-producer \
 {"idAsignacion":"UUID_DE_TU_ASIGNACION","idVehiculo":"UUID_DEL_VEHICULO"}
 #Ejemplo para las longitudes de los UUIDs:
 {"idAsignacion":"3fabc3ac-1067-4097-b369-0551b042f76b","idVehiculo":"11111111-1111-1111-1111-111211111111"}
+
+#----------------
 # Simular que Vehículos rechazó la solicitud
 kafka-console-producer \
   --bootstrap-server localhost:29092 \
@@ -230,20 +232,30 @@ kafka-console-producer \
 
 # Pegar este JSON:
 {"idAsignacion":"UUID_DE_TU_ASIGNACION","motivo":"Sin vehículos disponibles del tipo CAMION"}
-
+#---------------
 # Simular una falla mecánica desde Incidentes
 kafka-console-producer \
   --bootstrap-server localhost:29092 \
   --topic fleetops.incidentes.falla.mecanica
 
 # Pegar este JSON:
-{"idIncidente":"UUID","idVehiculo":"UUID","idAsignacion":"UUID","descripcion":"Motor averiado"}
-
-# Ver todos los mensajes que Asignaciones está publicando
+{
+    "incident_id": "INC-MEC-GRV-20260621-a3f9",
+    "driver_id": "CONDUCTOR-001",
+    "vehicle_id": "ABC-123",
+    "incident_type": "MECANICO",
+    "severity": "GRAVE",
+    "description": "Falla en los frenos.",
+    "event_date": "2026-06-21T22:00:01.123456"
+}
+#-----------------
+# Ver todos los mensajes que Asignaciones está publicando - Aqui vehiculos consulta/consume las solicitudes de asignacion
 kafka-console-consumer \
   --bootstrap-server localhost:29092 \
   --topic fleetops.vehiculos.solicitar \
   --from-beginning
+#en este topic habra un json así:
+{"idSaga":"UUID","idAsignacion":"UUID","tipoVehiculo":"CAMION","fechaInicio":"2026-07-01","fechaFin":"2026-07-10", "kilometros":"100"}
   
 #Ver todas las solictudes completadas
 kafka-console-consumer \  --bootstrap-server localhost:29092 \ --topic fleetops.asignaciones.completada \--from-beginning 
