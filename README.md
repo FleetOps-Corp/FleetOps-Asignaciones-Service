@@ -102,9 +102,23 @@ Respuesta posible:
 | `fleetops.vehiculos.liberar` | Asignaciones | Vehículos | Al procesar un incidente mecánico grave |
 | `fleetops.asignaciones.vehiculo.confirmado` | Vehículos | Asignaciones | Cuando Vehículos asigna el vehículo |
 | `fleetops.asignaciones.vehiculo.fallido` | Vehículos | Asignaciones | Cuando Vehículos no puede asignar |
-| `fleetops.incidentes.falla.mecanica` | Incidentes | Asignaciones | Cuando llega un incidente grave mecánico o humano |
 | `fleetops.asignaciones.completada` | Asignaciones | Otros servicios | Al completar exitosamente |
 | `fleetops.asignaciones.fallida` | Asignaciones | Otros servicios | Al fallar la asignación |
+
+## Cola SQS (Incidentes → Asignaciones)
+
+Incidentes y Asignaciones corren en instancias AWS separadas, por lo que esta integración
+ya no usa Kafka: Incidentes publica en un tópico SNS que hace fan-out hacia una cola SQS
+que este servicio consume.
+
+| Recurso | Quién publica | Quién consume | Cuándo |
+|---------|--------------|---------------|--------|
+| SNS `fleetops-incidentes-falla-mecanica` → SQS `fleetops-asignaciones-incidentes-falla-mecanica` | Incidentes | Asignaciones | Cuando llega un incidente grave mecánico o humano |
+
+Como la cola está suscrita al tópico SNS (y no recibe mensajes directos), el Body de cada
+mensaje SQS es el **sobre de notificación de SNS**, no el payload real. `SqsIncidentesConsumer`
+deserializa el sobre, toma el campo `Message` (un JSON serializado como string) y lo vuelve a
+deserializar para obtener el `FallaMecanicaMessage` real — dos pasadas de JSON, no una.
 
 ---
 
@@ -272,18 +286,14 @@ Primero levanta la infraestructura y el microservicio:
 docker compose up -d --build
 ```
 
-Luego publica un incidente grave mecánico en el topic `fleetops.incidentes.falla.mecanica` con este JSON:
+Luego publica un incidente grave mecánico en el tópico SNS local (LocalStack simula el
+mismo fan-out SNS -> SQS que usa Incidentes en AWS real; `aws sns publish` envuelve el
+mensaje automáticamente en el sobre de notificación que `SqsIncidentesConsumer` espera):
 
-```json
-{
-  "incident_id": "11111111-1111-1111-1111-111111111111",
-  "vehicle_id": "11111111-1111-1111-1111-111211111111",
-  "description": "Falla grave de motor",
-  "driver_id": "11111111-1111-1111-1111-111111111111",
-  "incident_type": "MECANICO",
-  "severity": "GRAVE",
-  "event_date": "2026-07-02T10:15:00Z"
-}
+```powershell
+docker exec -it fleetops-localstack awslocal sns publish `
+  --topic-arn arn:aws:sns:us-east-1:000000000000:fleetops-incidentes-falla-mecanica `
+  --message '{"incident_id":"11111111-1111-1111-1111-111111111111","vehicle_id":"11111111-1111-1111-1111-111211111111","description":"Falla grave de motor","driver_id":"11111111-1111-1111-1111-111111111111","incident_type":"MECANICO","severity":"GRAVE","event_date":"2026-07-02T10:15:00Z"}'
 ```
 
 En ese caso debes ver en los logs que Asignaciones:
@@ -295,16 +305,10 @@ En ese caso debes ver en los logs que Asignaciones:
 
 Para un incidente grave humano, publica un payload similar cambiando `incident_type` a `HUMANO` y usando el `driver_id` real del conductor afectado:
 
-```json
-{
-  "incident_id": "44444444-4444-4444-4444-444444444444",
-  "vehicle_id": "1111111-1111-1111-1111-111211111111",
-  "description": "Conductor incapacitado",
-  "driver_id": "11111111-1111-1111-1111-111111111111",
-  "incident_type": "HUMANO",
-  "severity": "GRAVE",
-  "even_date": "2026-07-02T10:20:00Z"
-}
+```powershell
+docker exec -it fleetops-localstack awslocal sns publish `
+  --topic-arn arn:aws:sns:us-east-1:000000000000:fleetops-incidentes-falla-mecanica `
+  --message '{"incident_id":"44444444-4444-4444-4444-444444444444","vehicle_id":"11111111-1111-1111-1111-111211111111","description":"Conductor incapacitado","driver_id":"11111111-1111-1111-1111-111111111111","incident_type":"HUMANO","severity":"GRAVE","event_date":"2026-07-02T10:20:00Z"}'
 ```
 
 Ese flujo debe:
@@ -323,7 +327,7 @@ docker compose logs -f asignaciones
 Si quieres ejecutar solo la suite impactada:
 
 ```powershell
-./mvnw test -Dtest=KafkaIncidentesConsumerTest,ReasignacionServiceTest
+./mvnw test -Dtest=SqsIncidentesConsumerTest,ReasignacionServiceTest
 ```
 
 ## Limitaciones conocidas y próximos pasos

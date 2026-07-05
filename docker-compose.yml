@@ -53,6 +53,27 @@ services:
       retries: 5
 
   # ── PostgreSQL ────────────────────────────────────────────────────────────
+  # LocalStack (simula SNS/SQS de AWS para desarrollo local).
+  # En AWS real, Incidentes y Asignaciones corren en cuentas/instancias separadas
+  # y se comunican por un topico SNS real con fan-out a esta cola SQS.
+  localstack:
+    image: localstack/localstack:3.7
+    container_name: fleetops-localstack
+    networks:
+      - fleetops-net
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: sns,sqs
+      DEFAULT_REGION: us-east-1
+    volumes:
+      - ./scripts/localstack-init.sh:/etc/localstack/init/ready.d/localstack-init.sh:ro
+    healthcheck:
+      test: ["CMD", "awslocal", "sqs", "list-queues"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   postgres:
     image: postgres:16.3-alpine3.20
     container_name: fleetops-postgres
@@ -85,6 +106,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      localstack:
+        condition: service_healthy
     environment:
       SERVER_PORT: 8020
       DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME}
@@ -98,9 +121,15 @@ services:
       KAFKA_TOPIC_VEHICULOS_LIBERAR: ${KAFKA_TOPIC_VEHICULOS_LIBERAR:-fleetops.vehiculos.liberar}
       KAFKA_TOPIC_VEHICULOS_CONFIRMADO: ${KAFKA_TOPIC_VEHICULOS_CONFIRMADO:-fleetops.asignaciones.vehiculo.confirmado}
       KAFKA_TOPIC_VEHICULOS_FALLIDO: ${KAFKA_TOPIC_VEHICULOS_FALLIDO:-fleetops.asignaciones.vehiculo.fallido}
-      KAFKA_TOPIC_INCIDENTES_FALLA: ${KAFKA_TOPIC_INCIDENTES_FALLA:-fleetops.incidentes.falla.mecanica}
       KAFKA_TOPIC_ASIGNACION_COMPLETADA: ${KAFKA_TOPIC_ASIGNACION_COMPLETADA:-fleetops.asignaciones.completada}
       KAFKA_TOPIC_ASIGNACION_FALLIDA: ${KAFKA_TOPIC_ASIGNACION_FALLIDA:-fleetops.asignaciones.fallida}
+      # AWS SQS: en AWS real, sin endpoint override, con credenciales por rol IAM.
+      # Aqui apuntamos a LocalStack para poder correr todo el flujo localmente.
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      SQS_QUEUE_INCIDENTES_FALLA: ${SQS_QUEUE_INCIDENTES_FALLA:-fleetops-asignaciones-incidentes-falla-mecanica}
+      SPRING_CLOUD_AWS_SQS_ENDPOINT: http://localstack:4566
+      SPRING_CLOUD_AWS_CREDENTIALS_ACCESS_KEY: test
+      SPRING_CLOUD_AWS_CREDENTIALS_SECRET_KEY: test
 
   prometheus:
     image: prom/prometheus:latest

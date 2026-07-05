@@ -97,9 +97,12 @@ KAFKA_TOPIC_VEHICULOS_SOLICITAR=fleetops.vehiculos.solicitar
 KAFKA_TOPIC_VEHICULOS_LIBERAR=fleetops.vehiculos.liberar
 KAFKA_TOPIC_VEHICULOS_CONFIRMADO=fleetops.asignaciones.vehiculo.confirmado
 KAFKA_TOPIC_VEHICULOS_FALLIDO=fleetops.asignaciones.vehiculo.fallido
-KAFKA_TOPIC_INCIDENTES_FALLA=fleetops.incidentes.falla.mecanica
 KAFKA_TOPIC_ASIGNACION_COMPLETADA=fleetops.asignaciones.completada
 KAFKA_TOPIC_ASIGNACION_FALLIDA=fleetops.asignaciones.fallida
+
+# AWS SQS — Incidentes corre en otra instancia AWS y publica vía SNS -> SQS
+AWS_REGION=us-east-1
+SQS_QUEUE_INCIDENTES_FALLA=fleetops-asignaciones-incidentes-falla-mecanica
 ```
 
 > El archivo `.env` está en `.gitignore` y nunca se sube al repositorio. Solo `.env.example` (sin valores reales) se versiona.
@@ -233,13 +236,14 @@ kafka-console-producer \
 # Pegar este JSON:
 {"idAsignacion":"UUID_DE_TU_ASIGNACION","motivo":"Sin vehículos disponibles del tipo CAMION"}
 #---------------
-# Simular una falla mecánica desde Incidentes
-kafka-console-producer \
-  --bootstrap-server localhost:29092 \
-  --topic fleetops.incidentes.falla.mecanica
-
-# Pegar este JSON:
-{
+# Simular una falla mecánica desde Incidentes.
+# Incidentes ya no publica en Kafka: publica en un tópico SNS que hace fan-out
+# hacia la cola SQS que consume este servicio. LocalStack (levantado por
+# docker-compose) simula ese SNS/SQS localmente; awslocal envuelve el mensaje
+# en el sobre de notificación SNS automáticamente, igual que en AWS real.
+docker exec -it fleetops-localstack awslocal sns publish \
+  --topic-arn arn:aws:sns:us-east-1:000000000000:fleetops-incidentes-falla-mecanica \
+  --message '{
     "incident_id": "INC-MEC-GRV-20260621-a3f9",
     "driver_id": "CONDUCTOR-001",
     "vehicle_id": "ABC-123",
@@ -247,7 +251,7 @@ kafka-console-producer \
     "severity": "GRAVE",
     "description": "Falla en los frenos.",
     "event_date": "2026-06-21T22:00:01.123456"
-}
+}'
 #-----------------
 # Ver todos los mensajes que Asignaciones está publicando - Aqui vehiculos consulta/consume las solicitudes de asignacion
 kafka-console-consumer \
@@ -360,9 +364,10 @@ Ningún test conecta a bases de datos reales ni a Kafka real — todo se simula 
 ### Flujo 3 — Falla mecánica reportada por Incidentes
 
 ```
-[Incidentes] detecta falla → publica FallaMecanicaEvent
+[Incidentes] detecta falla → publica en SNS → fan-out a SQS
 
-[KafkaIncidentesConsumer]           driving adapter Kafka
+[SqsIncidentesConsumer]             driving adapter SQS
+    │ deserializa el sobre SNS (Body) → toma "Message" → FallaMecanicaMessage
     │ convierte FallaMecanicaMessage → FallaMecanicaRecibidaEvent (domain event)
     ▼
 [ProcesarFallaMecanicaUseCase]      interface (puerto in)
@@ -469,7 +474,7 @@ POJOs puros (Java records) que representan hechos del dominio. No saben nada de 
 | `VehiculoLiberadoEvent.java` | Se publica al procesar una falla mecánica. Le dice a Vehículos que libere un vehículo específico. Contiene `idSaga` e `idVehiculo`. |
 | `AsignacionCompletadaEvent.java` | Se publica cuando la asignación termina exitosamente. Útil para auditoría y otros servicios que quieran reaccionar. Contiene los IDs de la saga, asignación, vehículo y conductor. |
 | `AsignacionFallidaEvent.java` | Se publica cuando la asignación falla. Contiene `idSaga`, `idAsignacion` y el motivo. |
-| `FallaMecanicaRecibidaEvent.java` | Representa una falla mecánica que llegó desde Incidentes. Es la traducción del mensaje Kafka al lenguaje del dominio (anti-corruption layer). Contiene `idIncidente`, `idVehiculo`, `idAsignacion`, `descripcion`. |
+| `FallaMecanicaRecibidaEvent.java` | Representa una falla mecánica que llegó desde Incidentes (vía SNS -> SQS). Es la traducción del mensaje al lenguaje del dominio (anti-corruption layer). Contiene `idIncidente`, `idVehiculo`, `idAsignacion`, `descripcion`. |
 
 ---
 
@@ -544,7 +549,7 @@ Todo el código relacionado con Kafka.
 | Archivo | Qué hace |
 |---------|----------|
 | `KafkaVehiculosConsumer.java` | Driving adapter que escucha dos topics separados: `vehiculos-confirmado` llama a `ProcesarVehiculoAsignadoUseCase`; `vehiculos-fallido` llama a `ProcesarVehiculoRechazadoUseCase`. ACK manual: el offset solo avanza si el procesamiento fue exitoso. Si falla, Kafka reintenta automáticamente. |
-| `KafkaIncidentesConsumer.java` | Driving adapter que escucha `incidentes.falla.mecanica`. Convierte el `FallaMecanicaMessage` (DTO de Kafka) al `FallaMecanicaRecibidaEvent` (domain event) y llama a `ProcesarFallaMecanicaUseCase`. ACK manual por la misma razón. |
+| `SqsIncidentesConsumer.java` | Driving adapter que escucha la cola SQS suscrita al tópico SNS de Incidentes. El Body es un sobre de notificación SNS: deserializa el sobre, toma el campo `Message` y lo vuelve a deserializar a `FallaMecanicaMessage`, que convierte a `FallaMecanicaRecibidaEvent` (domain event) y pasa a `ProcesarFallaMecanicaUseCase`. ACK manual: el mensaje solo se borra de la cola si el procesamiento fue exitoso. |
 
 #### `dto/`
 
@@ -552,7 +557,8 @@ Mensajes del broker — distintos a los DTOs HTTP para que un cambio en el contr
 
 | Archivo | Qué hace |
 |---------|----------|
-| `FallaMecanicaMessage.java` | Mensaje que llega desde Incidentes. Campos: `idIncidente`, `idVehiculo`, `idAsignacion`, `descripcion`. |
+| `FallaMecanicaMessage.java` | Payload real del incidente (contenido del campo `Message` del sobre SNS). Campos: `idIncidente`, `idVehiculo`, `idAsignacion`, `descripcion`. |
+| SnsNotificationEnvelope.java | Sobre de notificación SNS que llega como Body del mensaje SQS. Campos: Type, MessageId, TopicArn, Message (el FallaMecanicaMessage serializado como string), Timestamp. |
 | `VehiculoConfirmadoMessage.java` | Mensaje que llega desde Vehículos confirmando la asignación. Campos: `idAsignacion`, `idVehiculo`. |
 | `VehiculoRechazadoMessage.java` | Mensaje que llega desde Vehículos rechazando la solicitud. Campos: `idAsignacion`, `motivo`. |
 
@@ -633,7 +639,7 @@ Cada servicio implementa exactamente un use case. Hay dos razones: primero, evit
 
 **¿Cómo pruebo la coreografía si no tengo los microservicios de Vehículos e Incidentes?**
 
-Usa el producer de consola de Kafka para publicar manualmente los eventos de respuesta. El microservicio de Asignaciones no sabe si el evento vino de un microservicio real o de una consola — solo lee el mensaje del topic. Los comandos exactos están en la sección 5 de esta guía.
+Usa el producer de consola de Kafka para simular a Vehículos, y `awslocal sns publish` contra LocalStack para simular a Incidentes (que en AWS real publica en SNS desde otra cuenta/instancia). El microservicio de Asignaciones no sabe si el evento vino de un microservicio real o de una consola/CLI — solo lee el mensaje del topic o de la cola SQS. Los comandos exactos están en la sección 5 de esta guía.
 
 **¿Qué pasa si Kafka no está disponible cuando se crea una asignación?**
 
