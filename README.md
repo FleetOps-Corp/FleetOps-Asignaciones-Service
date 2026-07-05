@@ -15,7 +15,7 @@ Implementado con **Arquitectura Hexagonal (Ports & Adapters)**, **SAGA Coreograf
 | Mensajería | Apache Kafka | Comunicación asíncrona desacoplada entre microservicios |
 | Consistencia DB + Kafka | Kafka Transactions | Reemplaza el Outbox Pattern; atomicidad garantizada sin polling |
 | Persistencia | PostgreSQL + Flyway | ACID local; migraciones versionadas |
-| Seguridad | JWT + Spring Security | Stateless; compatible con arquitectura de microservicios |
+| Seguridad | JWT RS256 (Spring Security) | Stateless; el API Gateway firma con su llave privada, este microservicio solo valida con la llave pública — nunca conoce el secreto de firma |
 | Build | Maven 3.9 + Java 21 | Stack LTS estable |
 
 ---
@@ -55,6 +55,9 @@ Health check en `http://localhost:8080/actuator/health`
 ## Endpoints disponibles
 
 ### Crear una asignación
+
+El `<token>` debe estar firmado en RS256 por el API Gateway (o, en local, por la llave privada de prueba correspondiente a `secrets/jwt_public.pem` — ver `GUIA_PROYECTO.md`).
+
 ```bash
 POST /asignaciones
 Authorization: Bearer <token>

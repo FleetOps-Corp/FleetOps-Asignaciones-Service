@@ -81,8 +81,10 @@ DB_PASSWORD=una_contrasena_segura_aqui
 # Servidor
 SERVER_PORT=8080
 
-# JWT — mínimo 32 caracteres
-JWT_SECRET=mi_secreto_super_seguro_de_32_caracteres_minimo
+# JWT — RS256. El API Gateway firma con su llave privada; este microservicio
+# solo valida la firma con la llave pública montada por volumen.
+JWT_ALGORITHM=RS256
+JWT_PUBLIC_KEY_PATH=/app/secrets/jwt_public.pem
 
 # Kafka
 KAFKA_EXTERNAL_PORT=9092
@@ -156,9 +158,24 @@ mvn spring-boot:run
 
 ## 5. Cómo probar que funciona
 
-### Obtener un token JWT
+### Obtener un token JWT (RS256)
 
-Los endpoints están protegidos. Para pruebas, genera un token en [jwt.io](https://jwt.io) usando el mismo `JWT_SECRET` que pusiste en el `.env`.
+Los tokens ya no se generan en este microservicio: los emite y firma el **API Gateway** con su llave privada RSA. Este servicio solo tiene la llave **pública** (`secrets/jwt_public.pem`, montada por volumen en Docker Compose) y la usa para validar la firma — nunca ve ni necesita la llave privada.
+
+Para probar localmente sin levantar el Gateway, genera tu propio par de llaves de prueba, reemplaza la llave pública del repo y firma un token con la privada:
+
+```bash
+# 1. Generar un par de llaves RSA de prueba (no comitear la privada)
+openssl genrsa -out jwt_private_test.pem 2048
+openssl rsa -in jwt_private_test.pem -pubout -out secrets/jwt_public.pem
+
+# 2. Reiniciar el contenedor para que tome la llave pública nueva
+docker compose up --build asignaciones
+```
+
+Con `jwt_private_test.pem` puedes firmar un token RS256 de prueba, por ejemplo pegando su contenido en el panel "Private Key" del modo RS256 de [jwt.io](https://jwt.io), o con cualquier librería JWT que soporte RS256 (todas la aceptan: solo necesita `exp` en el futuro).
+
+> Si el token está expirado, tiene una firma que no corresponde a `secrets/jwt_public.pem`, o falta el header `Authorization`, el microservicio responde `401 Unauthorized` en cualquier ruta que no sea pública (`/actuator/**`, `/swagger-ui/**`, `/v3/api-docs/**`).
 
 ### Crear una asignación
 
@@ -405,7 +422,8 @@ fleetops-asignaciones/
 │                         ├── persistence/  Adaptadores JPA/PostgreSQL
 │                         ├── messaging/    Adaptadores Kafka (consumers + publisher)
 │                         ├── web/          Controllers REST + DTOs HTTP
-│                         └── config/       Spring Security, Swagger
+│                         ├── config/       SecurityConfig (cadena de filtros), Swagger
+│                         └── security/     Validación JWT RS256: decoder, filtro, entry point
 │
 ├── src/main/resources/
 │   ├── application.yml        Configuración (todo usa ${VARIABLE})
@@ -413,6 +431,7 @@ fleetops-asignaciones/
 │
 ├── src/test/                  Tests unitarios con Mockito
 │
+├── secrets/jwt_public.pem     Llave pública RSA para validar JWT (montada por volumen)
 ├── docker-compose.yml         PostgreSQL + Zookeeper + Kafka + Microservicio
 ├── Dockerfile                 Imagen del microservicio (multi-stage, non-root)
 ├── pom.xml                    Dependencias Maven
@@ -431,7 +450,8 @@ fleetops-asignaciones/
 | `pom.xml` | Define todas las dependencias (Spring Boot 3.3, Kafka, JPA, Flyway, JWT, Swagger, JaCoCo) y la configuracion de Maven. Incluye el plugin de JaCoCo configurado para exigir 80% de cobertura en la logica relevante de `domain` y `application`, excluyendo clases sin logica de negocio directa. |
 | `docker-compose.yml` | Describe los cuatro servicios: Zookeeper (requerido por Kafka), Kafka con soporte para transacciones, PostgreSQL con volumen persistente, y el microservicio de Asignaciones. Todos con healthchecks y red interna `fleetops-net`. |
 | `Dockerfile` | Construcción en dos etapas: primera etapa compila con Maven y produce el JAR; segunda etapa copia solo el JAR a una imagen JRE liviana y lo corre como usuario `fleetops` (no-root). |
-| `.env.example` | Plantilla con las 14 variables que necesita el proyecto, cada una con un comentario explicativo. Copiar a `.env` y completar con valores reales. |
+| `.env.example` | Plantilla con las variables que necesita el proyecto, cada una con un comentario explicativo. Copiar a `.env` y completar con valores reales. |
+| `secrets/jwt_public.pem` | Llave pública RSA (PEM) usada para validar la firma de los JWT emitidos por el API Gateway. Se monta en el contenedor vía volumen (`docker-compose.yml`) en la ruta que apunta `JWT_PUBLIC_KEY_PATH`. |
 | `.gitignore` | Excluye `.env`, `target/`, `*.log` y archivos de IDE del control de versiones. |
 
 ---
@@ -586,8 +606,20 @@ Mensajes del broker — distintos a los DTOs HTTP para que un cambio en el contr
 
 | Archivo | Qué hace |
 |---------|----------|
-| `SecurityConfig.java` | Configura Spring Security 6. Protege `/asignaciones` y `/asignaciones/saga/**` con JWT. Deja públicos `/swagger-ui/**`, `/v3/api-docs/**` y `/actuator/**`. Sin sesiones (stateless). |
+| `SecurityConfig.java` | Configura Spring Security 6: deja públicos `/actuator/**`, `/swagger-ui/**` y `/v3/api-docs/**`; el resto de rutas exige autenticación. Registra `JwtAuthenticationFilter` antes de `UsernamePasswordAuthenticationFilter` y usa `JwtAuthenticationEntryPoint` para responder 401 en peticiones sin token válido. Sin sesiones (stateless). |
 | `SwaggerConfig.java` | Configura el título y descripción que aparece en Swagger UI. |
+
+---
+
+### `infrastructure/security/`
+
+Validación de JWT emitidos por el API Gateway (RS256). No interviene en Kafka ni en SQS — solo en peticiones HTTP que llegan al contenedor de servlets.
+
+| Archivo | Qué hace |
+|---------|----------|
+| `JwtDecoderConfig.java` | Lee la llave pública PEM desde `JWT_PUBLIC_KEY_PATH`, la convierte a `RSAPublicKey` y construye el `JwtDecoder` (Nimbus) con el algoritmo indicado por `JWT_ALGORITHM`. Falla rápido al arrancar si el algoritmo no es reconocido o la llave no se puede leer. |
+| `JwtAuthenticationFilter.java` | `OncePerRequestFilter` que extrae el Bearer token del header `Authorization`, lo decodifica con el `JwtDecoder` (valida firma y expiración) y, si es válido, autentica la petición en el `SecurityContext`. Si no hay header, deja pasar sin autenticar (la ruta pública o el `authorizeHttpRequests` decide). Si el token es inválido o expiró, responde 401 vía `JwtAuthenticationEntryPoint` sin continuar la cadena. |
+| `JwtAuthenticationEntryPoint.java` | Punto único de respuesta 401 en JSON, usado tanto por el filtro (token inválido) como por Spring Security (ruta protegida sin ningún token). |
 
 ---
 
@@ -616,6 +648,8 @@ Todos los tests usan Mockito. Ninguno conecta a base de datos real ni a Kafka re
 | `ReasignacionServiceTest.java` | Verifica la reacción a falla mecánica: conductor liberado, SAGA en `PENDIENTE_LIBERACION`, `VehiculoLiberadoEvent` publicado para que Vehículos reaccione. |
 | `KafkaVehiculosConsumerTest.java` | Verifica que el consumer delega correctamente según el topic: confirmación va a `ProcesarVehiculoAsignadoUseCase`, rechazo va a `ProcesarVehiculoRechazadoUseCase`. Verifica que el ACK solo se hace si el procesamiento fue exitoso. |
 | `AsignacionControllerTest.java` | Verifica los endpoints HTTP con MockMvc: request válido retorna 202, email inválido retorna 400. |
+| `JwtDecoderConfigTest.java` | Genera un par de llaves RSA de prueba y firma tokens con `nimbus-jose-jwt` para verificar que el decoder acepta un token válido, y rechaza uno expirado o firmado con otra llave privada. |
+| `JwtAuthenticationFilterTest.java` | Verifica con mocks que el filtro autentica y continúa la cadena con un token válido, responde 401 sin continuar la cadena con un token inválido/expirado, y deja pasar sin autenticar cuando no hay header `Authorization`. |
 
 ---
 
@@ -644,3 +678,11 @@ Usa el producer de consola de Kafka para simular a Vehículos, y `awslocal sns p
 **¿Qué pasa si Kafka no está disponible cuando se crea una asignación?**
 
 Como la publicación del evento ocurre dentro de la misma transacción Kafka, si Kafka no está disponible la transacción completa hace rollback — incluyendo los cambios en PostgreSQL. El conductor vuelve a estar disponible y la asignación no se guarda. El cliente recibe un error 500. Esto es diferente al modelo anterior con OutboxWorker, donde el commit de DB sí ocurría y el worker reintentaba la publicación más tarde.
+
+**¿Por qué RS256 (asimétrico) y no HS256 (secreto compartido)?**
+
+Con HS256 todos los microservicios que validan el token necesitarían conocer el mismo secreto que lo firmó — cualquiera de ellos comprometido expone la capacidad de firmar tokens válidos para toda la plataforma. Con RS256 solo el API Gateway tiene la llave privada y firma; este microservicio (y cualquier otro) solo necesita la llave pública correspondiente para validar, sin poder emitir tokens él mismo. Es el modelo estándar cuando hay un emisor central (el Gateway) y múltiples validadores (los microservicios).
+
+**¿Este filtro JWT afecta a los eventos de Kafka o a los mensajes de SQS?**
+
+No. `JwtAuthenticationFilter` es un `OncePerRequestFilter` registrado en la cadena de Spring Security, que solo intercepta peticiones HTTP que llegan al contenedor de servlets (Tomcat embebido). Los consumers de Kafka (`KafkaVehiculosConsumer`) y de SQS (`SqsIncidentesConsumer`) reciben mensajes directamente del broker/cola, fuera de esa cadena — nunca pasan por este filtro ni por `SecurityConfig`.
