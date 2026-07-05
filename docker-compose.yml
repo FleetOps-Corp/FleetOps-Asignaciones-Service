@@ -99,6 +99,8 @@ services:
     container_name: fleetops-asignaciones
     networks:
       - fleetops-net
+    volumes:
+      - ./secrets/jwt_public.pem:/app/secrets/jwt_public.pem:ro
     ports:
       - "${SERVER_PORT:-8020}:8020"
     depends_on:
@@ -111,6 +113,8 @@ services:
     environment:
       SERVER_PORT: 8020
       DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME}
+      JWT_ALGORITHM: ${JWT_ALGORITHM}
+      JWT_PUBLIC_KEY_PATH: ${JWT_PUBLIC_KEY_PATH}
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092

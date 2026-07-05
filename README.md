@@ -64,7 +64,7 @@ Content-Type: application/json
   "tipoVehiculo": "CAMION",
   "fechaInicio": "2026-07-01",
   "fechaFin": "2026-07-10",
-  "emailContacto": "coordinador@fleetops.com"
+  "kilometros": "100"
 }
 ```
 
@@ -79,11 +79,7 @@ Respuesta `202 Accepted`:
 
 El `202` indica que el proceso continúa de forma asíncrona vía Kafka. Guarda el `idSaga`.
 
-### Consultar estado de la SAGA
-```bash
-GET /asignaciones/saga/{idSaga}
-Authorization: Bearer <token>
-```
+
 
 Respuesta posible:
 ```json
