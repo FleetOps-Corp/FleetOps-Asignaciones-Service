@@ -242,7 +242,7 @@ kafka-console-producer \
 # Pegar este JSON y presionar Enter:
 {"idAsignacion":"UUID_DE_TU_ASIGNACION","idVehiculo":"UUID_DEL_VEHICULO"}
 #Ejemplo para las longitudes de los UUIDs:
-{"idAsignacion":"e90b40a1-74af-4c24-93f6-dadfd2f03523","idVehiculo":"11111111-1111-1111-1111-111211111111"}
+{"idAsignacion":"ee58ec8b-3c55-47e0-b38f-154d29cf4dd2","idVehiculo":"11111111-1111-1111-1111-111211111111"}
 
 #----------------
 # Simular que Vehículos rechazó la solicitud
@@ -251,7 +251,7 @@ kafka-console-producer \
   --topic fleetops.asignaciones.vehiculo.fallido
 
 # Pegar este JSON:
-{"idAsignacion":"UUID_DE_TU_ASIGNACION","motivo":"Sin vehículos disponibles del tipo CAMION"}
+{"idAsignacion":"62e75a63-ff79-4809-90ec-83f166d1e24c","motivo":"Sin vehículos disponibles del tipo CAMION"}
 #---------------
 # Simular una falla mecánica desde Incidentes.
 # Incidentes ya no publica en Kafka: publica en un tópico SNS que hace fan-out
