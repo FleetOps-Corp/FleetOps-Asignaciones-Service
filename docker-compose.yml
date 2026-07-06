@@ -132,9 +132,6 @@ services:
       # Aqui apuntamos a LocalStack para poder correr todo el flujo localmente.
       AWS_REGION: ${AWS_REGION:-us-east-1}
       SQS_QUEUE_INCIDENTES_FALLA: ${SQS_QUEUE_INCIDENTES_FALLA:-queue_assignations}
-      SPRING_CLOUD_AWS_SQS_ENDPOINT: http://localstack:4566
-      SPRING_CLOUD_AWS_CREDENTIALS_ACCESS_KEY: test
-      SPRING_CLOUD_AWS_CREDENTIALS_SECRET_KEY: test
 
   prometheus:
     image: prom/prometheus:latest
