@@ -73,4 +73,4 @@ asignaciones:
   # Incidentes publica en un tópico SNS que hace fan-out hacia esta cola SQS (fuera de este repo).
   sqs:
     queues:
-      incidentes-falla-mecanica: ${SQS_QUEUE_INCIDENTES_FALLA:fleetops-asignaciones-incidentes-falla-mecanica}
+      queue_assignations: ${SQS_QUEUE_INCIDENTES_FALLA:queue_assignations}

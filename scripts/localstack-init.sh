@@ -6,9 +6,9 @@
 set -e
 
 REGION="us-east-1"
-TOPIC_NAME="fleetops-incidentes-falla-mecanica"
-QUEUE_NAME="fleetops-asignaciones-incidentes-falla-mecanica"
-DLQ_NAME="fleetops-asignaciones-incidentes-falla-mecanica-dlq"
+TOPIC_NAME="queue_assignations"
+QUEUE_NAME="queue_assignations"
+DLQ_NAME="queue_assignations-dlq"
 
 DLQ_URL=$(awslocal sqs create-queue --queue-name "$DLQ_NAME" --region "$REGION" --query QueueUrl --output text)
 DLQ_ARN=$(awslocal sqs get-queue-attributes --queue-url "$DLQ_URL" --attribute-names QueueArn --region "$REGION" --query Attributes.QueueArn --output text)
