@@ -23,3 +23,6 @@ target/site/
 Thumbs.db
 
 ERRORES_RESUMEN.md
+jwt_public.pem
+./secrets/jwt_public.pem
+jwt_private_test.pem
