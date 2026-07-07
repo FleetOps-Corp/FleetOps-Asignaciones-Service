@@ -28,7 +28,12 @@ spring:
   cloud:
     aws:
       region:
-        static: ${AWS_REGION}
+        static: ${AWS_REGION:us-east-1}
+      credentials:
+        instance-profile: true          # Usa el rol IAM de la EC2
+      sqs:
+        listener:
+          queue-not-found-strategy: IGNORE
 
 server:
   port: ${SERVER_PORT:8082}
@@ -55,7 +60,6 @@ springdoc:
   api-docs:
     path: /v3/api-docs
 
-# ── Configuración de dominio ──────────────────────────────────────────────────
 asignaciones:
   kafka:
     consumer:
@@ -69,12 +73,6 @@ asignaciones:
       vehiculos-fallido:     ${KAFKA_TOPIC_VEHICULOS_FALLIDO:fleetops.asignaciones.vehiculo.fallido}
       asignacion-completada: ${KAFKA_TOPIC_ASIGNACION_COMPLETADA:fleetops.asignaciones.completada}
       asignacion-fallida:    ${KAFKA_TOPIC_ASIGNACION_FALLIDA:fleetops.asignaciones.fallida}
-
-  # Incidentes publica en un tópico SNS que hace fan-out hacia esta cola SQS (fuera de este repo).
-  # SQS_QUEUE_INCIDENTES_FALLA debe ser la URL completa de la cola
-  # (https://sqs.<region>.amazonaws.com/<accountId>/<queueName>), no solo el nombre:
-  # el rol IAM de este servicio no tiene sqs:GetQueueUrl, así que la librería SQS
-  # necesita la URL ya resuelta para no intentar llamarlo (ver SqsConfig).
   sqs:
     queues:
       queue_assignations: ${SQS_QUEUE_INCIDENTES_FALLA:queue_assignations}
