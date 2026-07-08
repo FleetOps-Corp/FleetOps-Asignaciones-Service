@@ -29,7 +29,18 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          ./mvnw clean verify sonar:sonar \
+          ./mvnw clean verify
+
+          echo "===== JACOCO FILES ====="
+          ls -R target/site/jacoco
+
+          echo "===== JACOCO XML ====="
+          head -30 target/site/jacoco/jacoco.xml
+
+          echo "===== LINE COUNTERS ====="
+          grep 'counter type="LINE"' target/site/jacoco/jacoco.xml | tail
+
+          ./mvnw sonar:sonar \
             -Dsonar.projectKey=FleetOps-Corp_FleetOps-Asignaciones-Service \
             -Dsonar.organization=fleetops-corp \
             -Dsonar.host.url=https://sonarcloud.io \
